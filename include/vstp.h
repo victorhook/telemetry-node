@@ -13,17 +13,24 @@
 #define VSTP_TX_MAX_PDU_SIZE         1024
 #define VSTP_TX_BUF_MAX_PDUS         10  // Max nbr of PDUs to hold
 
+// How long to wait between transmission to force-send the current TX buffer,
+// even if it's not full
+#define VSTP_UPSTREAM_TX_MAX_DELAY_MS 100000
+
 // Choose between STA (Station) and AP (Access Point)
 #define VSTP_NETWORK_WIFI_MODE_STA 1
 #define VSTP_NETWORK_SERVER_PORT 80
 
 typedef enum {
-    VSTP_CMD_LOG_START,
-    VSTP_CMD_LOG_STOP,
-    VSTP_CMD_LOG_DATA,
-    VSTP_CMD_LOG_SD_START,
-    VSTP_CMD_LOG_SD_STOP
+    VSTP_CMD_LOG_START    = 0,
+    VSTP_CMD_LOG_STOP     = 1,
+    VSTP_CMD_LOG_DATA     = 2,
+    VSTP_CMD_LOG_SD_START = 3,
+    VSTP_CMD_LOG_SD_STOP  = 4
 } vstp_cmd_t;
+
+// This is used for validating commands, please update accordingly
+#define VSTP_NBR_OF_CMDS 5
 
 typedef enum
 {
@@ -85,6 +92,8 @@ typedef struct
     uint8_t              rx_buf_number;
     uint8_t              tx_buf_number;
     tx_buf_t             tx_buf;
+
+    uint32_t             last_upstream_tx;
 
     // Network
     WiFiServer*          server;
