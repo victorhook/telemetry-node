@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 import struct
 from enum import IntEnum
 import time
+from pathlib import Path
 
 
 class VSTP_Cmd(IntEnum):
@@ -38,12 +39,16 @@ def bytes_to_hex_string(data) -> str:
     return ' '.join(hex(b)[2:].zfill(2) for b in data)
 
 
+LOG_DEFAULT_PATH = str(Path(__file__).absolute().parent.joinpath('out.log'))
+
+
 class FcMock(Serial):
 
-    def __init__(self, port: str, log_path: str, baudrate=115200) -> None:
+    def __init__(self, port: str, log_path: str = LOG_DEFAULT_PATH, baudrate=115200) -> None:
         self._read_thread_stop = Event()
         self.log = open(log_path, 'w')
         super().__init__(port, baudrate=baudrate)
+        print(f'Started logging to: {log_path}')
 
     def close(self) -> None:
         self._read_thread_stop.set()
@@ -77,6 +82,9 @@ class FcMock(Serial):
     def write_full_log_buff(self) -> None:
         self._send(VSTP_Packet(VSTP_Cmd.LOG_DATA, b'hello world'))
 
+    def write_custom(self, data: bytes) -> None:
+        self._send(VSTP_Packet(VSTP_Cmd.LOG_DATA, data))
+
     def write_many(self, nbr: int, delay_between_pkts: float) -> None:
         print(f'Sending {nbr} packets')
         for i in range(nbr):
@@ -105,4 +113,4 @@ if __name__ == '__main__':
         sys.exit(0)
 
     port = sys.argv[1]
-    mock = FcMock(port, 'out.log')
+    mock = FcMock(port)
