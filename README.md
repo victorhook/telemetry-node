@@ -22,52 +22,25 @@ stateDiagram-v2
     TIMED_OUT --> WAIT_FOR_CMD
 ```
 
-## TX Buffers
+## Buffers
 
-The telemetry node contains an internal buffer for the log data where the data is stored before it's sent upstream. This buffer is in turn divided into smaller PDU buffers, where each of the PDU buffers can contain data of size `VSTP_TX_MAX_PDU_SIZE`. This is by default set to 1024 for TCP.
+The telemetry node buffers incoming vstp data into its internal RX ring buffer.
+The RX buffer consists of a ring buffer, which can hold X number of packets, given by `VSTP_RX_BUF_NBR_OF_PKTS`. While this is not super-efficient use of memory resource
+(since some will be empty without being used), it makes the implementation simple.
 
-The number of PDU buffers is determined by `VSTP_TX_BUF_MAX_PDUS` and defaults to 10. This means that by default, the telemtry tx buffer looks like:
+Each slot in the ring buffer is of size `VSTP_PACKET_MAX_PAYLOAD_SIZE` (default 252 bytes),
+which means that for 50 slots, it can buffer a maximum of 50*252=12600 bytes.
+
+## Data transmission
+The telemetry node transmits data if there is at least one package in the RX buffer
+and the streaming is activated.
 
 
-| Buffer number | Size (bytes) |
+## Commands
+| Command | Description |
 | --- | --- |
-| 0 | 1024 |
-| 1 | 1024 |
-| 2 | 1024 |
-| 3 | 1024 |
-| 4 | 1024 |
-| 5 | 1024 |
-| 6 | 1024 |
-| 7 | 1024 |
-| 8 | 1024 |
-| 9 | 1024 |
-
-This requires 10240 kB of RAM that will be statically allocated for the buffer (unless changed).
-
-## RX Data reception
-
-When telemetry node is receiving log data, it puts it into the next available tx buffer. If no buffer is available (we haven't been able to send it upstream fast enough), the new data is discarded.
-
-
-When TX is transmitting, it looks at the tx buffers, and chooses the correct
-buffer, with the `buffer_number`.
-
-```
-buffers[10];
-
-tx_buf_t* buf = buffers[buffer_number];
-int buf_size = buf->buf_size;
-
-// Construct tx packet
-tx_tcp_buf[PDU_SIZE];
-
-// Copy data to TCP TX buffer
-memcpy(tx_tcp_buf, buf->size, 2);
-memcpy(&tx_tcp_buf[2], buf->data, buf->size);
-
-```
-
-### Upstream Packet
-| Packet size | Data |
-| --- | --- |
-| 0-1 | 2...MAX_PDU_SIZE |
+| VSTP_CMD_LOG_START    | Starts streaming data upstream (**required**) in order for the telemetry node to start sending any data upstream. |
+| VSTP_CMD_LOG_STOP     | Stops streaming data upstream | |
+| VSTP_CMD_LOG_DATA     | Packet contains logging data  |
+| VSTP_CMD_LOG_SD_START | Starts writing data to SD card. This creates a new file on the SD card. |
+| VSTP_CMD_LOG_SD_STOP  | Stops writing data to the SD card. |
