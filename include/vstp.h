@@ -10,8 +10,8 @@
 #define VSTP_PACKET_HEADER_SIZE      3
 #define VSTP_PACKET_MAX_PAYLOAD_SIZE (0xFF - VSTP_PACKET_HEADER_SIZE)
 #define VSTP_RX_TIMEOUT_MS           500
-#define VSTP_TX_MAX_PDU_SIZE         1024
-#define VSTP_TX_BUF_MAX_PDUS         10  // Max nbr of PDUs to hold
+#define VSTP_RX_BUF_NBR_OF_PKTS      50
+#define VSTP_PKT_BUF_SIZE            VSTP_PACKET_MAX_PAYLOAD_SIZE
 
 // How long to wait between transmission to force-send the current TX buffer,
 // even if it's not full
@@ -56,14 +56,8 @@ typedef struct {
 typedef struct
 {
     uint16_t size;
-    bool     full;
-    uint8_t  data[VSTP_TX_MAX_PDU_SIZE];
-} rx_buf_t;
-
-typedef struct {
-    uint16_t size;
-    uint8_t  data[VSTP_TX_MAX_PDU_SIZE];
-} tx_buf_t;
+    uint8_t  data[VSTP_PKT_BUF_SIZE];
+} pkt_buf_t;
 
 /*
  * Returns the next byte available in UART RX buffer.
@@ -88,10 +82,10 @@ typedef struct
     vstp_pkt_t           rx_pkt;
 
     // RX and TX buffers
-    rx_buf_t             rx_bufs[VSTP_TX_BUF_MAX_PDUS];
-    uint8_t              rx_buf_number;
-    uint8_t              tx_buf_number;
-    tx_buf_t             tx_buf;
+    pkt_buf_t             rx_bufs[VSTP_RX_BUF_NBR_OF_PKTS];
+    size_t                rx_buf_index;
+    size_t                rx_buf_size;
+    pkt_buf_t             tx_buf;
 
     uint32_t             last_upstream_tx;
 

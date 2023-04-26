@@ -6,25 +6,33 @@
 
 #define SERVER_NOT_CONNECTED 0
 
-#define DEBUG_PRINTF(...) Serial.printf(__VA_ARGS__)
+//#define DO_DEBUG
+
+#ifdef DO_DEBUG
+    #define DEBUG_PRINTF(...) Serial.printf(__VA_ARGS__)
+#else
+    #define DEBUG_PRINTF(...)
+#endif
 
 
 // -- Helper functions -- //
 static bool valid_length(const uint8_t length);
 static bool valid_command(const uint8_t command);
 
-static void mark_buffer_as_full(vstp_state_t* vstp_state, rx_buf_t* tx_buf);
-
 static void transmit_upstream_data(vstp_state_t* vstp_state);
 
-static uint8_t get_next_buf_number(const uint8_t current_buf_number);
+/* Returns NULL if there is no receive buffer available */
+static pkt_buf_t* get_next_rx_buf(vstp_state_t* vstp_state);
 
-/*
- * Returns the next tx buffer to transmit.
- * Returns NULL if there's no data to transmit, or if the tx_buf_number is
- * out of bounds (error).
-*/
-static rx_buf_t* get_next_rx_buf_to_fill(vstp_state_t* vstp_state);
+/* Adds the incoming RX packet to the RX buffer.
+ * Returns true if successful and false if the RX buffer is full.
+ */
+static bool add_rx_buf(vstp_state_t* vstp_state);
+
+/* "Consumes" the current rx buffer, so the internal ring buffer index
+ * is incremented.
+ */
+static void consume_rx_buf(vstp_state_t* vstp_state, pkt_buf_t* buf);
 
 static void handle_incoming_packet(vstp_state_t* vstp_state, const vstp_cmd_t cmd);
 
@@ -52,8 +60,8 @@ void vstp_init(vstp_state_t* vstp_state, uart_read_one_byte uart_read)
     vstp_state->discarded_packets = 0;
 
     // TX buffer
-    vstp_state->rx_buf_number = 0;
-    vstp_state->tx_buf_number = 0;
+    vstp_state->rx_buf_index = 0;
+    vstp_state->rx_buf_size = 0;
 
     vstp_state->last_upstream_tx = 0;
 
@@ -184,58 +192,53 @@ void vstp_update(vstp_state_t* vstp_state)
         vstp_state->server->begin(VSTP_NETWORK_SERVER_PORT);
     }
 
-    rx_buf_t* next_rx_buf = next_rx_buf = &vstp_state->rx_bufs[vstp_state->tx_buf_number];
-    bool send_data = false;
+    static uint32_t t0_debug_msg = 0;
     uint32_t now = millis();
+    pkt_buf_t* next_rx_buf = get_next_rx_buf(vstp_state);
 
-    //DEBUG_PRINTF("%d: now: %d, last: %d\n", vstp_state->is_logging_upstream, now, vstp_state->last_upstream_tx);
+    bool consume_data = vstp_state->is_logging_upstream | vstp_state->is_logging_to_sd;
 
-    if ( next_rx_buf->full ||
-        ((next_rx_buf->size > 0) && ((now - vstp_state->last_upstream_tx) > VSTP_UPSTREAM_TX_MAX_DELAY_MS))
-       )
+    if ((now - t0_debug_msg) > 1000)
     {
-        send_data = true;
+        DEBUG_PRINTF("buf size: %d, ", vstp_state->rx_buf_size);
+        DEBUG_PRINTF("rx_index: %d, ", vstp_state->rx_buf_size);
+        DEBUG_PRINTF("consume: %d, ", consume_data);
+        DEBUG_PRINTF("log_upstream: %d, ", vstp_state->is_logging_upstream);
+        DEBUG_PRINTF("log_sd: %d, ", vstp_state->is_logging_to_sd);
+        DEBUG_PRINTF("log_debug: %d", vstp_state->is_logging_debug);
+        DEBUG_PRINTF("\n");
+        t0_debug_msg = now;
     }
 
-    if (send_data)
-    {
-        if (vstp_state->is_logging_upstream)
-        {
-            // Copy data from RX buffer into TX buffer
-            // TODO: Turn off interrupts?
-            vstp_state->tx_buf.size = next_rx_buf->size;
-            memcpy(vstp_state->tx_buf.data, next_rx_buf->data, next_rx_buf->size);
-            transmit_upstream_data(vstp_state);
-        }
-        if (vstp_state->is_logging_to_sd)
-        {
-            // TODO
-        }
-        if (vstp_state->is_logging_debug)
-        {
-            // TODO
-        }
-
-        //DEBUG_PRINTF("TX BUF: %d, size: %d\n", vstp_state->tx_buf_number, next_rx_buf->size);
-        //delay(500);
-
-        if (next_rx_buf->full)
-        {
-            // If buffer was full before sending, we'll get the next buffer number.
-            // However, if the buffer was NOT full, this means we sent half-full buffer,
-            // and then we should not change the buffer number, since the RX buffer number
-            // will still point to this buffer.
-            vstp_state->tx_buf_number = get_next_buf_number(vstp_state->tx_buf_number);
-        }
-        next_rx_buf->size = 0;
-        next_rx_buf->full = false;
-        vstp_state->last_upstream_tx = now;
-    }
-    else
+    if (next_rx_buf == NULL)
     {
         return;
     }
 
+    memcpy(vstp_state->tx_buf.data, next_rx_buf->data, next_rx_buf->size);
+    vstp_state->tx_buf.size = next_rx_buf->size;
+
+    if (vstp_state->is_logging_upstream)
+    {
+        // Copy data from RX buffer into TX buffer
+        // TODO: Turn off interrupts?
+        transmit_upstream_data(vstp_state);
+    }
+    if (vstp_state->is_logging_to_sd)
+    {
+        // TODO
+    }
+    if (vstp_state->is_logging_debug)
+    {
+        // TODO
+    }
+
+    if (consume_data)
+    {
+        consume_rx_buf(vstp_state, next_rx_buf);
+    }
+
+    vstp_state->last_upstream_tx = now;
 }
 
 
@@ -249,7 +252,6 @@ void vstp_update(vstp_state_t* vstp_state)
  */
 static void transmit_upstream_data(vstp_state_t* vstp_state)
 {
-    //DEBUG_PRINTF("Client connected: %d\n", vstp_state->client.connected());
     if (!vstp_state->client.connected())
     {
         // No client connected, try to accept incoming connections
@@ -272,16 +274,6 @@ static bool valid_length(const uint8_t length)
 static bool valid_command(const uint8_t command)
 {
     return command <= VSTP_NBR_OF_CMDS;
-}
-
-static uint8_t get_next_buf_number(const uint8_t current_buf_number)
-{
-    uint8_t next = current_buf_number + 1;
-    if (next >= VSTP_TX_BUF_MAX_PDUS)
-    {
-        next = 0;
-    }
-    return next;
 }
 
 static void handle_incoming_packet(vstp_state_t* vstp_state, const vstp_cmd_t cmd)
@@ -320,70 +312,13 @@ static void handle_incoming_packet(vstp_state_t* vstp_state, const vstp_cmd_t cm
 
 }
 
-static void mark_buffer_as_full(vstp_state_t* vstp_state, rx_buf_t* tx_buf) {
-    tx_buf->full = true;
-    vstp_state->tx_buf_number = get_next_buf_number(vstp_state->rx_buf_number);
-}
-
 // -- Command handlers -- //
 static void cmd_handler_log_data(vstp_state_t* vstp_state)
 {
-    bool discard_packet = false;
-    uint16_t new_rx_buf_size;
-    // Data to copy is Data length + Header size
-    uint16_t nbr_of_bytes_to_copy = vstp_state->rx_pkt.len + VSTP_PACKET_HEADER_SIZE;
-
-    rx_buf_t* rx_buf = get_next_rx_buf_to_fill(vstp_state);
-    DEBUG_PRINTF("%d, size: %d\n", vstp_state->rx_buf_number, rx_buf->size);
-
-    if (rx_buf == NULL)
+    if (!add_rx_buf(vstp_state))
     {
-        discard_packet = true;
-    }
-    else
-    {
-        new_rx_buf_size = rx_buf->size + nbr_of_bytes_to_copy;
-        DEBUG_PRINTF("Old rx_buf size: %d, byte to copy: %d, New rx buff size: %d\n", rx_buf->size, nbr_of_bytes_to_copy, new_rx_buf_size);
-
-        if (new_rx_buf_size > VSTP_TX_MAX_PDU_SIZE)
-        {
-            // New tx buffer size is too big, so we'll try to find another available buffer
-            mark_buffer_as_full(vstp_state, rx_buf);
-
-            rx_buf = get_next_rx_buf_to_fill(vstp_state);
-
-            if (rx_buf == NULL)
-            {
-                discard_packet = true;
-            }
-            else
-            {
-                // We don't have to check for size here, because there's never
-                // two "not discovered full" packets in a row.
-                new_rx_buf_size = rx_buf->size + nbr_of_bytes_to_copy;
-            }
-        }
-    }
-
-    if (discard_packet)
-    {
-        DEBUG_PRINTF("Discarding packet...\n");
-        // No valid tx buffer found, probably means we're receiving
-        // data faster than we can send.
-        // We will discard the newly received data!
+        DEBUG_PRINTF("Discarding packet\n");
         vstp_state->discarded_packets++;
-    }
-    else
-    {
-        uint16_t old_rx_buf_size = rx_buf->size;
-        // TODO: Disable interrupts?
-
-        DEBUG_PRINTF("Copying %d bytes to buffer %d, new size: %d\n", nbr_of_bytes_to_copy, vstp_state->rx_buf_number, new_rx_buf_size);
-
-        // Copy the data in the RX buffer into the TX buffer
-        memcpy(&rx_buf->data[old_rx_buf_size], vstp_state->rx_pkt.buf, nbr_of_bytes_to_copy);
-        // Change the size of the TX buffer
-        rx_buf->size = new_rx_buf_size;
     }
 }
 static void cmd_handler_log_start(vstp_state_t* vstp_state)
@@ -404,13 +339,48 @@ static void cmd_handler_log_sd_stop(vstp_state_t* vstp_state)
 }
 
 
-static rx_buf_t* get_next_rx_buf_to_fill(vstp_state_t* vstp_state) {
-    rx_buf_t* tx_buf = &vstp_state->rx_bufs[vstp_state->tx_buf_number];
-    if (tx_buf->full)
+
+static pkt_buf_t* get_next_rx_buf(vstp_state_t* vstp_state)
+{
+    if (vstp_state->rx_buf_size == 0)
     {
         return NULL;
     }
-
-    return tx_buf;
+    // Example:
+    // index = 2
+    // size = 4
+    // MAX_PKTS = 10
+    // index = ( (2-4) + 10 ) % 10 = 8
+    size_t buf_index = ( (vstp_state->rx_buf_index - vstp_state->rx_buf_size) + VSTP_RX_BUF_NBR_OF_PKTS ) % VSTP_RX_BUF_NBR_OF_PKTS;
+    return &vstp_state->rx_bufs[buf_index];
 }
 
+static bool add_rx_buf(vstp_state_t* vstp_state)
+{
+    if (vstp_state->rx_buf_size >= VSTP_RX_BUF_NBR_OF_PKTS)
+    {
+        return false;
+    }
+
+    pkt_buf_t* buf = &vstp_state->rx_bufs[vstp_state->rx_buf_index];
+    memcpy(buf->data, vstp_state->rx_pkt.buf, vstp_state->rx_pkt.len);
+    buf->size = vstp_state->rx_pkt.len;
+
+    vstp_state->rx_buf_size += 1;
+    vstp_state->rx_buf_index = (vstp_state->rx_buf_index + 1) % VSTP_RX_BUF_NBR_OF_PKTS;
+
+    return true;
+}
+
+static void consume_rx_buf(vstp_state_t* vstp_state, pkt_buf_t* buf)
+{
+    if (vstp_state->rx_buf_size == 0)
+    {
+        // Should never happen!
+        DEBUG_PRINTF("Tried to consume buffer when size 0!");
+        return;
+    }
+
+    vstp_state->rx_buf_index = ((vstp_state->rx_buf_index - 1) + VSTP_RX_BUF_NBR_OF_PKTS) % VSTP_RX_BUF_NBR_OF_PKTS;
+    vstp_state->rx_buf_size--;
+}
