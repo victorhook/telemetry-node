@@ -1,0 +1,5 @@
+#!/bin/bash
+
+IP=127.0.0.1
+PORT=9090
+source env/bin/activate && FLASK_APP=server.py flask run --debug --host=${IP} --port=${PORT}

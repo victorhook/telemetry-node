@@ -1,0 +1,233 @@
+[
+    {
+        "label": "dataclass",
+        "importPath": "dataclasses",
+        "description": "dataclasses",
+        "isExtraImport": true,
+        "detail": "dataclasses",
+        "documentation": {}
+    },
+    {
+        "label": "dataclass",
+        "importPath": "dataclasses",
+        "description": "dataclasses",
+        "isExtraImport": true,
+        "detail": "dataclasses",
+        "documentation": {}
+    },
+    {
+        "label": "fields",
+        "importPath": "dataclasses",
+        "description": "dataclasses",
+        "isExtraImport": true,
+        "detail": "dataclasses",
+        "documentation": {}
+    },
+    {
+        "label": "Flask",
+        "importPath": "flask",
+        "description": "flask",
+        "isExtraImport": true,
+        "detail": "flask",
+        "documentation": {}
+    },
+    {
+        "label": "jsonify",
+        "importPath": "flask",
+        "description": "flask",
+        "isExtraImport": true,
+        "detail": "flask",
+        "documentation": {}
+    },
+    {
+        "label": "CORS",
+        "importPath": "flask_cors",
+        "description": "flask_cors",
+        "isExtraImport": true,
+        "detail": "flask_cors",
+        "documentation": {}
+    },
+    {
+        "label": "List",
+        "importPath": "typing",
+        "description": "typing",
+        "isExtraImport": true,
+        "detail": "typing",
+        "documentation": {}
+    },
+    {
+        "label": "time",
+        "kind": 6,
+        "isExtraImport": true,
+        "importPath": "time",
+        "description": "time",
+        "detail": "time",
+        "documentation": {}
+    },
+    {
+        "label": "socket",
+        "kind": 6,
+        "isExtraImport": true,
+        "importPath": "socket",
+        "description": "socket",
+        "detail": "socket",
+        "documentation": {}
+    },
+    {
+        "label": "Thread",
+        "importPath": "threading",
+        "description": "threading",
+        "isExtraImport": true,
+        "detail": "threading",
+        "documentation": {}
+    },
+    {
+        "label": "Event",
+        "importPath": "threading",
+        "description": "threading",
+        "isExtraImport": true,
+        "detail": "threading",
+        "documentation": {}
+    },
+    {
+        "label": "IntEnum",
+        "importPath": "enum",
+        "description": "enum",
+        "isExtraImport": true,
+        "detail": "enum",
+        "documentation": {}
+    },
+    {
+        "label": "struct",
+        "kind": 6,
+        "isExtraImport": true,
+        "importPath": "struct",
+        "description": "struct",
+        "detail": "struct",
+        "documentation": {}
+    },
+    {
+        "label": "Queue",
+        "importPath": "queue",
+        "description": "queue",
+        "isExtraImport": true,
+        "detail": "queue",
+        "documentation": {}
+    },
+    {
+        "label": "LogBlockData",
+        "importPath": "log_types",
+        "description": "log_types",
+        "isExtraImport": true,
+        "detail": "log_types",
+        "documentation": {}
+    },
+    {
+        "label": "LogBlockData",
+        "kind": 6,
+        "importPath": "log_types",
+        "description": "log_types",
+        "peekOfCode": "class LogBlockData:\n    raw_gyro_x: float = 0 # float\n    raw_gyro_y: float = 0 # float\n    raw_gyro_z: float = 0 # float\n    filtered_gyro_x: float = 0 # float\n    filtered_gyro_y: float = 0 # float\n    filtered_gyro_z: float = 0 # float\n    rc_in_roll: float = 0 # uint16_t\n    rc_in_pitch: float = 0 # uint16_t\n    rc_in_yaw: float = 0 # uint16_t",
+        "detail": "log_types",
+        "documentation": {}
+    },
+    {
+        "label": "LogBlock",
+        "kind": 6,
+        "importPath": "server",
+        "description": "server",
+        "peekOfCode": "class LogBlock:\n    type: int # log_type_t\n    timestamp: int # uint32_t\n    id: int # uint64_t\n    data: LogBlockData\n    header_fmt = '<BII'\n    data_fmt = LogBlockData.fmt\n    header_size = struct.calcsize(header_fmt)\n    data_size = struct.calcsize(data_fmt)\n    def to_bytes(self) -> bytes:",
+        "detail": "server",
+        "documentation": {}
+    },
+    {
+        "label": "TelemetryClient",
+        "kind": 6,
+        "importPath": "server",
+        "description": "server",
+        "peekOfCode": "class TelemetryClient:\n    class ParseState(IntEnum):\n        HEADER = 0\n        DATA = 1\n    def __init__(self, ip: str, port: int) -> None:\n        self.sock: socket.socket = None\n        self.ip = ip\n        self.port = port\n        self._stop_flag = Event()\n        self._rx = Queue()",
+        "detail": "server",
+        "documentation": {}
+    },
+    {
+        "label": "API",
+        "kind": 6,
+        "importPath": "server",
+        "description": "server",
+        "peekOfCode": "class API:\n    @app.route(API_BASE + '/get_log_blocks')\n    def get_log_blocks() -> None:\n        return jsonify(gen_random_log_blocks())\n@app.route(\"/\")\ndef index():\n  return \"Hello, cross-origin-world!\"",
+        "detail": "server",
+        "documentation": {}
+    },
+    {
+        "label": "gen_random_log_blocks",
+        "kind": 2,
+        "importPath": "server",
+        "description": "server",
+        "peekOfCode": "def gen_random_log_blocks() -> List[LogBlock]:\n    global log_id\n    blocks = []\n    data = LogBlockData()\n    block  = LogBlock(LOG_TYPE_PID, time.time(), log_id, data)\n    log_id += 1\n    blocks.append(block)\n    return blocks\nclass TelemetryClient:\n    class ParseState(IntEnum):",
+        "detail": "server",
+        "documentation": {}
+    },
+    {
+        "label": "index",
+        "kind": 2,
+        "importPath": "server",
+        "description": "server",
+        "peekOfCode": "def index():\n  return \"Hello, cross-origin-world!\"",
+        "detail": "server",
+        "documentation": {}
+    },
+    {
+        "label": "app",
+        "kind": 5,
+        "importPath": "server",
+        "description": "server",
+        "peekOfCode": "app = Flask(__name__)\nCORS(app)\nLOG_TYPE_PID = 0\nlog_id = 0\n@dataclass\nclass LogBlock:\n    type: int # log_type_t\n    timestamp: int # uint32_t\n    id: int # uint64_t\n    data: LogBlockData",
+        "detail": "server",
+        "documentation": {}
+    },
+    {
+        "label": "LOG_TYPE_PID",
+        "kind": 5,
+        "importPath": "server",
+        "description": "server",
+        "peekOfCode": "LOG_TYPE_PID = 0\nlog_id = 0\n@dataclass\nclass LogBlock:\n    type: int # log_type_t\n    timestamp: int # uint32_t\n    id: int # uint64_t\n    data: LogBlockData\n    header_fmt = '<BII'\n    data_fmt = LogBlockData.fmt",
+        "detail": "server",
+        "documentation": {}
+    },
+    {
+        "label": "log_id",
+        "kind": 5,
+        "importPath": "server",
+        "description": "server",
+        "peekOfCode": "log_id = 0\n@dataclass\nclass LogBlock:\n    type: int # log_type_t\n    timestamp: int # uint32_t\n    id: int # uint64_t\n    data: LogBlockData\n    header_fmt = '<BII'\n    data_fmt = LogBlockData.fmt\n    header_size = struct.calcsize(header_fmt)",
+        "detail": "server",
+        "documentation": {}
+    },
+    {
+        "label": "telem_client",
+        "kind": 5,
+        "importPath": "server",
+        "description": "server",
+        "peekOfCode": "telem_client = TelemetryClient('192.168.10.207', 80)\ntelem_client.start()\nAPI_BASE = '/api'\nclass API:\n    @app.route(API_BASE + '/get_log_blocks')\n    def get_log_blocks() -> None:\n        return jsonify(gen_random_log_blocks())\n@app.route(\"/\")\ndef index():\n  return \"Hello, cross-origin-world!\"",
+        "detail": "server",
+        "documentation": {}
+    },
+    {
+        "label": "API_BASE",
+        "kind": 5,
+        "importPath": "server",
+        "description": "server",
+        "peekOfCode": "API_BASE = '/api'\nclass API:\n    @app.route(API_BASE + '/get_log_blocks')\n    def get_log_blocks() -> None:\n        return jsonify(gen_random_log_blocks())\n@app.route(\"/\")\ndef index():\n  return \"Hello, cross-origin-world!\"",
+        "detail": "server",
+        "documentation": {}
+    },
+    {
+        "label": "s",
+        "kind": 5,
+        "importPath": "testmepls",
+        "description": "testmepls",
+        "peekOfCode": "s = socket.socket()\ns.connect(('192.168.10.207', 80))",
+        "detail": "testmepls",
+        "documentation": {}
+    }
+]
