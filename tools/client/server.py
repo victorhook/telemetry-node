@@ -1,7 +1,7 @@
 from flask import Flask, jsonify
 from flask_cors import CORS
 
-from telemetry_client import TelemetryClient, LogBlock, gen_random_log_blocks
+from telemetry_client import TelemetryClient#, LogBlock, gen_random_log_blocks
 
 
 app = Flask(__name__)
@@ -18,7 +18,9 @@ class API:
 
     @app.route(API_BASE + '/get_log_blocks')
     def get_log_blocks() -> None:
-        return jsonify(gen_random_log_blocks())
+        log_blocks = telem_client.get_log_blocks()
+        print(f'HTTP REQ: {len(log_blocks)}')
+        return jsonify(log_blocks)
 
 
 @app.route("/")

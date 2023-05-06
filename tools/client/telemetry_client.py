@@ -7,45 +7,43 @@ from enum import IntEnum
 import struct
 from queue import Queue
 
-from log_types import LogBlockData
+from log_types import log_block_control_loop_t, log_type_t
 
 
 LOG_TYPE_PID = 0
 log_id = 0
 
+
 @dataclass
-class LogBlock:
-    type: int # log_type_t
+class LogBlockHeader:
+    type: log_type_t # log_type_t
     timestamp: int # uint32_t
     id: int # uint64_t
 
-    data: LogBlockData
+    fmt = '<BII'
+    size = struct.calcsize(fmt)
 
-    header_fmt = '<BII'
-    data_fmt = LogBlockData.fmt
-    header_size = struct.calcsize(header_fmt)
-    data_size = struct.calcsize(data_fmt)
+@dataclass
+class LogBlock:
+    header: LogBlockHeader
+    data: any
 
     def to_bytes(self) -> bytes:
         ''' Returns a log block as bytes. '''
-        values = [self.type, self.timestamp, self.id]
+        values = [self.header.type, int(self.header.timestamp), self.header.id]
         for field in fields(self.data):
-            values.append(getattr(self, field.name))
+            values.append(getattr(self.data, field.name))
 
-        fmt = self.header_fmt + self.data_fmt
-        return struct.pack(fmt, values)
-
-    @classmethod
-    def from_bytes(cls, raw: bytes) -> 'LogBlock':
-        ''' Converts raw bytes into a log block'''
-        pass
+        fmt = self.header.fmt + self.data.fmt.replace('<', '')
+        return struct.pack(fmt, *values)
 
 
 def gen_random_log_blocks() -> List[LogBlock]:
     global log_id
     blocks = []
-    data = LogBlockData()
-    block  = LogBlock(LOG_TYPE_PID, time.time(), log_id, data)
+    header  = LogBlockHeader(LOG_TYPE_PID, time.time(), log_id)
+    data = log_block_control_loop_t()
+    block = LogBlock(header, data)
     log_id += 1
     blocks.append(block)
 
@@ -97,7 +95,7 @@ class TelemetryClient:
         return log_blocks
 
     def _run(self) -> None:
-        print('Telem client thread started')
+        print('Telemetry client thread started')
         while not self._stop_flag.is_set():
             if self.sock is None:
                 if not self._connect():
@@ -105,11 +103,26 @@ class TelemetryClient:
                     continue
 
             # Parse log header
-            header = self.sock.recv(LogBlock.header_size)
-            data = self.sock.recv(LogBlock.data_size)
-            log_block = LogBlock.from_bytes(header + data)
+            header_raw = self.sock.recv(LogBlockHeader.size)
+            header = LogBlockHeader(*struct.unpack(LogBlockHeader.fmt, header_raw))
+            print(f'New log block received: {header}')
+
+            log_block: LogBlock
+
+            if header.type == log_type_t.LOG_TYPE_PID:
+                data_raw = self.sock.recv(log_block_control_loop_t.size)
+                data = log_block_control_loop_t(
+                    *struct.unpack(log_block_control_loop_t.fmt, data_raw))
+                log_block = LogBlock(header, data)
+
+                print(f'gyro_x: {data.raw_gyro_x}')
+            else:
+                print(f'No support for log types {header.type} yet!')
+                continue
 
             self._rx.put(log_block)
+            print(f'Queue size: {len(self._rx.queue)}')
+
         print('Telem client thread ended')
 
     def _connect(self) -> None:
