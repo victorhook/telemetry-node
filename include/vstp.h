@@ -22,15 +22,17 @@
 #define VSTP_NETWORK_SERVER_PORT 80
 
 typedef enum {
-    VSTP_CMD_LOG_START    = 0,
-    VSTP_CMD_LOG_STOP     = 1,
-    VSTP_CMD_LOG_DATA     = 2,
-    VSTP_CMD_LOG_SD_START = 3,
-    VSTP_CMD_LOG_SD_STOP  = 4
+    VSTP_CMD_LOG_START    = 1,
+    VSTP_CMD_LOG_STOP     = 2,
+    VSTP_CMD_LOG_DATA     = 3,
+    VSTP_CMD_LOG_SD_START = 4,
+    VSTP_CMD_LOG_SD_STOP  = 5,
+    VSTP_CMD_RESET        = 6
 } vstp_cmd_t;
 
 // This is used for validating commands, please update accordingly
-#define VSTP_NBR_OF_CMDS 5
+#define VSTP_LOWEST_CMD_VALUE 1
+#define VSTP_NBR_OF_CMDS      6
 
 typedef enum
 {

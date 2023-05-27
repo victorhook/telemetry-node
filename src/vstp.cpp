@@ -3,6 +3,8 @@
 
 #include "string.h"
 
+#include "WiFiUdp.h"
+
 
 #define SERVER_NOT_CONNECTED 0
 
@@ -16,10 +18,13 @@
 
 
 // -- Helper functions -- //
+static void reset(vstp_state_t* vstp_state);
+
 static bool valid_length(const uint8_t length);
 static bool valid_command(const uint8_t command);
 
-static void transmit_upstream_data(vstp_state_t* vstp_state);
+/* Returns true if transmit is OK */
+static bool transmit_upstream_data(vstp_state_t* vstp_state);
 
 /* Returns NULL if there is no receive buffer available */
 static pkt_buf_t* get_next_rx_buf(vstp_state_t* vstp_state);
@@ -44,26 +49,14 @@ static void cmd_handler_log_data(vstp_state_t* vstp_state);
 static void cmd_handler_log_sd_start(vstp_state_t* vstp_state);
 static void cmd_handler_log_sd_stop(vstp_state_t* vstp_state);
 
+WiFiUDP udp;
+
 
 // -- Public functions -- //
 
 void vstp_init(vstp_state_t* vstp_state, uart_read_one_byte uart_read)
 {
-    // States
-    vstp_state->fsm = FSM_STATE_WAIT_FOR_CMD;
-    vstp_state->is_logging_upstream = false;
-    vstp_state->is_logging_to_sd = false;
-    vstp_state->is_logging_debug = false;
-
-    // RX Parsing states
-    vstp_state->parse_errors = 0;
-    vstp_state->discarded_packets = 0;
-
-    // TX buffer
-    vstp_state->rx_buf_index = 0;
-    vstp_state->rx_buf_size = 0;
-
-    vstp_state->last_upstream_tx = 0;
+    reset(vstp_state);
 
     vstp_state->uart_read = uart_read;
 
@@ -81,7 +74,6 @@ void vstp_init(vstp_state_t* vstp_state, uart_read_one_byte uart_read)
     }
     */
 }
-
 
 void vstp_process_byte(vstp_state_t* vstp_state, const uint8_t byte)
 {
@@ -129,7 +121,6 @@ void vstp_process_byte(vstp_state_t* vstp_state, const uint8_t byte)
             }
             else
             {   // RX packet contains no data
-                next_state = FSM_STATE_WAIT_FOR_CMD;
                 validate_packet = true;
             }
             break;
@@ -140,11 +131,10 @@ void vstp_process_byte(vstp_state_t* vstp_state, const uint8_t byte)
             vstp_state->rx_pkt.buf[vstp_state->bytes_read] = byte;
             vstp_state->rx_crc ^= byte;
             vstp_state->bytes_read++;
-            DEBUG_PRINTF("DATA: %d/%d\n", vstp_state->bytes_read, vstp_state->rx_pkt.len);
+            //DEBUG_PRINTF("DATA: %d/%d\n", vstp_state->bytes_read, vstp_state->rx_pkt.len);
 
             if (vstp_state->bytes_read >= vstp_state->rx_pkt.len)
             {
-                next_state = FSM_STATE_WAIT_FOR_CMD;
                 validate_packet = true;
             }
             break;
@@ -153,13 +143,13 @@ void vstp_process_byte(vstp_state_t* vstp_state, const uint8_t byte)
 
     if (validate_packet)
     {
-        DEBUG_PRINTF("Validate packet: ");
-        DEBUG_PRINTF("CMD: %d, Len: %d, CRC: %d, Calculated CRC: %d\n",
-            vstp_state->rx_pkt.cmd,
-            vstp_state->rx_pkt.len,
-            vstp_state->rx_pkt.crc,
-            vstp_state->rx_crc
-        );
+        //DEBUG_PRINTF("Validate packet: ");
+        //DEBUG_PRINTF("CMD: %d, Len: %d, CRC: %d, Calculated CRC: %d\n",
+        //    vstp_state->rx_pkt.cmd,
+        //    vstp_state->rx_pkt.len,
+        //    vstp_state->rx_pkt.crc,
+        //    vstp_state->rx_crc
+        //);
         if (vstp_state->rx_crc == vstp_state->rx_pkt.crc)
         {   // Done reading packet, give it to packer handler
             handle_incoming_packet(vstp_state, vstp_state->rx_pkt.cmd);
@@ -171,9 +161,11 @@ void vstp_process_byte(vstp_state_t* vstp_state, const uint8_t byte)
 
         // Reset packet states
         vstp_state->bytes_read = 0;
+
+        next_state = FSM_STATE_WAIT_FOR_CMD;
     }
 
-    DEBUG_PRINTF("Errs: %d. State: %d -> %d\n", vstp_state->parse_errors, vstp_state->fsm, next_state);
+    //DEBUG_PRINTF("Errs: %d. State: %d -> %d\n", vstp_state->parse_errors, vstp_state->fsm, next_state);
     vstp_state->fsm = next_state;
 }
 
@@ -192,6 +184,10 @@ void vstp_update(vstp_state_t* vstp_state)
         vstp_state->server->begin(VSTP_NETWORK_SERVER_PORT);
     }
 
+    //vstp_state->tx_buf.size = 100;
+    //transmit_upstream_data(vstp_state);
+    //return;
+
     static uint32_t t0_debug_msg = 0;
     uint32_t now = millis();
     pkt_buf_t* next_rx_buf = get_next_rx_buf(vstp_state);
@@ -200,8 +196,9 @@ void vstp_update(vstp_state_t* vstp_state)
 
     if ((now - t0_debug_msg) > 1000)
     {
+        DEBUG_PRINTF("Parse errs: %d, ", vstp_state->parse_errors);
         DEBUG_PRINTF("buf size: %d, ", vstp_state->rx_buf_size);
-        DEBUG_PRINTF("rx_index: %d, ", vstp_state->rx_buf_size);
+        DEBUG_PRINTF("rx_index: %d, ", vstp_state->rx_buf_index);
         DEBUG_PRINTF("consume: %d, ", consume_data);
         DEBUG_PRINTF("log_upstream: %d, ", vstp_state->is_logging_upstream);
         DEBUG_PRINTF("log_sd: %d, ", vstp_state->is_logging_to_sd);
@@ -218,11 +215,11 @@ void vstp_update(vstp_state_t* vstp_state)
     memcpy(vstp_state->tx_buf.data, next_rx_buf->data, next_rx_buf->size);
     vstp_state->tx_buf.size = next_rx_buf->size;
 
+    bool upstream_logged_ok = false;
+
     if (vstp_state->is_logging_upstream)
     {
-        // Copy data from RX buffer into TX buffer
-        // TODO: Turn off interrupts?
-        transmit_upstream_data(vstp_state);
+        upstream_logged_ok = transmit_upstream_data(vstp_state);
     }
     if (vstp_state->is_logging_to_sd)
     {
@@ -233,16 +230,33 @@ void vstp_update(vstp_state_t* vstp_state)
         // TODO
     }
 
-    if (consume_data)
+    if (consume_data && upstream_logged_ok)
     {
         consume_rx_buf(vstp_state, next_rx_buf);
     }
-
-    vstp_state->last_upstream_tx = now;
 }
 
 
 // -- Static functions -- //
+static void reset(vstp_state_t* vstp_state)
+{
+    // States
+    vstp_state->fsm = FSM_STATE_WAIT_FOR_CMD;
+    vstp_state->is_logging_upstream = false;
+    vstp_state->is_logging_to_sd = false;
+    vstp_state->is_logging_debug = false;
+
+    // RX Parsing states
+    vstp_state->parse_errors = 0;
+    vstp_state->discarded_packets = 0;
+
+    // TX buffer
+    vstp_state->rx_buf_index = 0;
+    vstp_state->rx_buf_size = 0;
+
+    vstp_state->last_upstream_tx = 0;
+}
+
 /*
  * Tries to transmit the data upstream to a connected client.
  * If no client is connected, we see if any pending connections are
@@ -250,7 +264,7 @@ void vstp_update(vstp_state_t* vstp_state)
  * If still, no client is connected, we simply return, which means that
  * the data never reaches the client.
  */
-static void transmit_upstream_data(vstp_state_t* vstp_state)
+static bool transmit_upstream_data(vstp_state_t* vstp_state)
 {
     if (!vstp_state->client.connected())
     {
@@ -259,12 +273,21 @@ static void transmit_upstream_data(vstp_state_t* vstp_state)
         if (!vstp_state->client.connected())
         {
             // Still no client connected? then we'll return
-            return;
+            return false;
         }
+
+        //vstp_state->client.setDefaultSync(true);
     }
 
-    DEBUG_PRINTF("Upstream: %d bytes\n", vstp_state->tx_buf.size);
+    //DEBUG_PRINTF("Upstream: %d bytes\n", vstp_state->tx_buf.size);
+    uint64_t t0 = millis();
+    //udp.beginPacket({192, 168, 4, 2}, 1234);
+    //udp.write(vstp_state->tx_buf.data, vstp_state->tx_buf.size);
+    //udp.endPacket();
     vstp_state->client.write(vstp_state->tx_buf.data, vstp_state->tx_buf.size);
+    //vstp_state->client.flush(5);
+    DEBUG_PRINTF("dt: %ld\n", millis() - t0);
+    return true;
 }
 
 static bool valid_length(const uint8_t length)
@@ -273,13 +296,13 @@ static bool valid_length(const uint8_t length)
 }
 static bool valid_command(const uint8_t command)
 {
-    return command <= VSTP_NBR_OF_CMDS;
+    return (command >= VSTP_LOWEST_CMD_VALUE) && (command <= VSTP_NBR_OF_CMDS);
 }
 
 static void handle_incoming_packet(vstp_state_t* vstp_state, const vstp_cmd_t cmd)
 {
 
-    DEBUG_PRINTF("Incoming: %d\n", cmd);
+    //DEBUG_PRINTF("Incoming: %d\n", cmd);
 
     switch (cmd)
     {
@@ -308,6 +331,9 @@ static void handle_incoming_packet(vstp_state_t* vstp_state, const vstp_cmd_t cm
             cmd_handler_log_sd_stop(vstp_state);
             break;
         }
+        case VSTP_CMD_RESET:
+            reset(vstp_state);
+            break;
     }
 
 }
@@ -337,7 +363,6 @@ static void cmd_handler_log_sd_stop(vstp_state_t* vstp_state)
 {
     vstp_state->is_logging_to_sd = false;
 }
-
 
 
 static pkt_buf_t* get_next_rx_buf(vstp_state_t* vstp_state)
