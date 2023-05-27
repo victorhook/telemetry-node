@@ -6,49 +6,19 @@ from threading import Thread, Event
 from enum import IntEnum
 import struct
 from queue import Queue
+import os
 
-from log_types import log_block_control_loop_t, log_type_t
 
+from log_types import log_block_data_control_loop_t, log_block_header_t, log_type_t
+from telemetry_client_logger import TelemetryClientLogger
 
 LOG_TYPE_PID = 0
 log_id = 0
 
 
-@dataclass
-class LogBlockHeader:
-    type: log_type_t # log_type_t
-    timestamp: int # uint32_t
-    id: int # uint64_t
 
-    fmt = '<BII'
-    size = struct.calcsize(fmt)
-
-@dataclass
-class LogBlock:
-    header: LogBlockHeader
-    data: any
-
-    def to_bytes(self) -> bytes:
-        ''' Returns a log block as bytes. '''
-        values = [self.header.type, int(self.header.timestamp), self.header.id]
-        for field in fields(self.data):
-            values.append(getattr(self.data, field.name))
-
-        fmt = self.header.fmt + self.data.fmt.replace('<', '')
-        return struct.pack(fmt, *values)
-
-
-def gen_random_log_blocks() -> List[LogBlock]:
-    global log_id
-    blocks = []
-    header  = LogBlockHeader(LOG_TYPE_PID, time.time(), log_id)
-    data = log_block_control_loop_t()
-    block = LogBlock(header, data)
-    log_id += 1
-    blocks.append(block)
-
-    return blocks
-
+def gen_random_log_block() -> List[log_type_t]:
+    return log_block_data_control_loop_t(LOG_TYPE_PID, int(time.time()), log_id)
 
 
 class TelemetryClient:
@@ -71,6 +41,7 @@ class TelemetryClient:
         self._rx = Queue()
         self._parse_state = self.ParseState.HEADER
         self.connect_retry_delay_s = 5
+        self.logger = TelemetryClientLogger()
 
     def start(self) -> None:
         '''
@@ -87,7 +58,7 @@ class TelemetryClient:
         ''' Wait until the telemetry client thread ends. '''
         self._stop_flag.wait()
 
-    def get_log_blocks(self) -> List[LogBlock]:
+    def get_log_blocks(self) -> List[log_type_t]:
         ''' Returns all logblocks available in the rx queue. '''
         log_blocks = []
         while not self._rx.empty():
@@ -96,6 +67,13 @@ class TelemetryClient:
 
     def _run(self) -> None:
         print('Telemetry client thread started')
+        #self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        #self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        #self.sock.bind(('192.168.4.2', 1234))
+
+        i = 0
+        t0 = time.time()
+
         while not self._stop_flag.is_set():
             if self.sock is None:
                 if not self._connect():
@@ -103,25 +81,35 @@ class TelemetryClient:
                     continue
 
             # Parse log header
-            header_raw = self.sock.recv(LogBlockHeader.size)
-            header = LogBlockHeader(*struct.unpack(LogBlockHeader.fmt, header_raw))
-            print(f'New log block received: {header}')
+            try:
+                header_raw = self.sock.recv(log_block_header_t.size)
+                header_args = struct.unpack(log_block_header_t.fmt, header_raw)
+                header = log_block_header_t(*header_args)
+                #print(f'New log block received: {header}')
 
-            log_block: LogBlock
+                log_block: log_type_t
 
-            if header.type == log_type_t.LOG_TYPE_PID:
-                data_raw = self.sock.recv(log_block_control_loop_t.size)
-                data = log_block_control_loop_t(
-                    *struct.unpack(log_block_control_loop_t.fmt, data_raw))
-                log_block = LogBlock(header, data)
+                if header.type == log_type_t.LOG_TYPE_PID:
+                    data_raw = self.sock.recv(log_block_data_control_loop_t.size)
+                    data_args = struct.unpack(log_block_data_control_loop_t.fmt, data_raw)
+                    log_block = log_block_data_control_loop_t(*(header_args + data_args))
+                else:
+                    print(f'No support for log types {header.type} yet!')
+                    continue
 
-                print(f'gyro_x: {data.raw_gyro_x}')
-            else:
-                print(f'No support for log types {header.type} yet!')
-                continue
+                self.logger.log(log_block)
+                self._rx.put(log_block)
 
-            self._rx.put(log_block)
-            print(f'Queue size: {len(self._rx.queue)}')
+                i += log_block_header_t.size + log_block_data_control_loop_t.size
+
+                if (time.time() - t0) >= 1:
+                    t0 = time.time()
+                    print(f'RX: {i / 1000} kB')
+                    i = 0
+                #print(f'Queue size: {len(self._rx.queue)}')
+
+            except struct.error:
+                print('err')
 
         print('Telem client thread ended')
 
@@ -135,3 +123,18 @@ class TelemetryClient:
         except OSError as e:
             print(f'Failed to connect to {self.ip}:{self.port}: {e}')
             return False
+
+
+
+if __name__ == '__main__':
+    # Ensure that we are on the telemetry nodes network
+    target_ssid = 'telemetrynode'
+    ssid_name = os.popen('iwgetid -r').read().strip()
+    if ssid_name != target_ssid:
+        print(f'Not connected to target SSID "{target_ssid}", connecting...')
+        os.system('nmcli con up telemetrynode')
+
+    #telem_client = TelemetryClient('192.168.10.204', 80)
+    telem_client = TelemetryClient('192.168.4.1', 80)
+    telem_client.start()
+    telem_client.wait_for_complete()
